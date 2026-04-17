@@ -2,19 +2,28 @@ import streamlit as st
 import xml.etree.ElementTree as ET
 
 st.set_page_config(page_title="Artemisa POS", page_icon="🔧")
+
+# Ocultamos los menús de Streamlit para que no salgan en la impresión
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🔧 Artemisa XML a Ticket")
 
 uploaded_file = st.file_uploader("Arrastra el XML de autorización aquí", type=["xml"])
 
 if uploaded_file is not None:
     try:
-        # 1. Limpieza y Lectura
         xml_data = uploaded_file.read().decode("utf-8").strip()
         root = ET.fromstring(xml_data)
         comprobante_xml_string = root.find('comprobante').text.strip()
         factura_root = ET.fromstring(comprobante_xml_string)
         
-        # 2. Datos de Cabecera
+        # Datos de Cabecera
         info_t = factura_root.find('infoTributaria')
         info_f = factura_root.find('infoFactura')
         
@@ -25,38 +34,40 @@ if uploaded_file is not None:
         fecha = info_f.find('fechaEmision').text
         total_f = float(info_f.find('importeTotal').text)
 
-        st.subheader("📋 Formato Final para Impresión")
-
-        # 3. Construcción del Ticket en Texto Plano (Ancho 40 carac.)
-        # Esto asegura que no haya fondos negros ni gráficos extraños
-        cuerpo_ticket = f"{emisor[:40]}\n"
-        cuerpo_ticket += f"RUC: {ruc_em}\n"
-        cuerpo_ticket += "-" * 40 + "\n"
-        cuerpo_ticket += f"FECHA: {fecha}\n"
-        cuerpo_ticket += f"CLIENTE: {cliente[:31]}\n"
-        cuerpo_ticket += f"RUC/CI: {ruc_cl}\n"
-        cuerpo_ticket += "-" * 40 + "\n"
-        cuerpo_ticket += f"{'CANT':<6}{'DESCRIPCION':<18}{'P.U':>7}{'TOTAL':>9}\n"
-        cuerpo_ticket += "-" * 40 + "\n"
+        # CONSTRUCCIÓN DEL TICKET (Ancho para POS-80)
+        # Usamos pre-format para que cada espacio cuente
+        t = f"{emisor.center(40)}\n"
+        t += f"{('RUC: ' + ruc_em).center(40)}\n"
+        t += "-" * 40 + "\n"
+        t += f"FECHA: {fecha}\n"
+        t += f"CLIENTE: {cliente[:31]}\n"
+        t += f"RUC/CI: {ruc_cl}\n"
+        t += "-" * 40 + "\n"
+        t += f"{'CANT':<6}{'DESCRIPCION':<16}{'P.U':>8}{'TOTAL':>10}\n"
+        t += "-" * 40 + "\n"
 
         for det in factura_root.findall('.//detalles/detalle'):
             cant = float(det.find('cantidad').text)
-            desc = det.find('descripcion').text[:17]
+            desc = det.find('descripcion').text[:15]
             p_uni = float(det.find('precioUnitario').text)
             subt = float(det.find('precioTotalSinImpuesto').text)
-            cuerpo_ticket += f"{cant:<6.2f}{desc:<18}${p_uni:>6.2f}${subt:>8.2f}\n"
+            t += f"{cant:<6.2f}{desc:<16}${p_uni:>7.2f}${subt:>9.2f}\n"
 
-        cuerpo_ticket += "-" * 40 + "\n"
-        cuerpo_ticket += f"{'TOTAL A PAGAR:':<30}${total_f:>9.2f}\n"
-        cuerpo_ticket += "=" * 40 + "\n"
-        cuerpo_ticket += "      ¡Gracias por su confianza!\n"
-        cuerpo_ticket += "        Soporte: Artemisa Tech"
+        t += "-" * 40 + "\n"
+        t += f"{'TOTAL A PAGAR:':<28}${total_f:>11.2f}\n"
+        t += "=" * 40 + "\n"
+        t += "        ¡Gracias por su compra!\n"
+        t += "         Soporte: Artemisa Tech"
 
-        # Mostramos el ticket con st.text para que sea fondo blanco y texto negro
-        st.text(cuerpo_ticket)
+        # MOSTRAR TICKET PROFESIONAL
+        st.markdown(f"""
+            <div style="background-color: white; color: black; padding: 10px; font-family: monospace; white-space: pre; line-height: 1.2; border: 1px solid #ddd;">
+{t}
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Botón de ayuda para impresión
-        st.info("Para imprimir: Selecciona el texto de arriba, presiona Ctrl+P y en 'Ajustes' asegúrate de desactivar 'Gráficos de fondo'.")
+        st.write("---")
+        st.info("Presiona **Ctrl + P** para imprimir directamente.")
 
     except Exception as e:
-        st.error(f"Error técnico: {e}")
+        st.error(f"Error al generar el ticket: {e}")

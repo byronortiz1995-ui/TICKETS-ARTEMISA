@@ -1,87 +1,103 @@
-import streamlit as st
 import xml.etree.ElementTree as ET
+import win32print
+import win32ui
+import win32con
+from tkinter import filedialog, messagebox
+import tkinter as tk
 
-st.set_page_config(page_title="Artemisa POS", page_icon="🔧")
+def obtener_texto(nodo, etiqueta):
+    """Función de seguridad: si no encuentra la etiqueta, devuelve 'N/A' en vez de fallar"""
+    busqueda = nodo.find(etiqueta)
+    return busqueda.text.strip() if busqueda is not None and busqueda.text else "N/A"
 
-# CSS DEFINITIVO: Solo el ticket existe para la impresora
-st.markdown("""
-    <style>
-    #MainMenu, footer, header {visibility: hidden;}
-
-    @media print {
-        /* Ocultar todo lo que no sea el ticket */
-        body * { visibility: hidden; }
-        .ticket-print, .ticket-print * { 
-            visibility: visible !important; 
-        }
-        .ticket-print {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            border: none !important;
-        }
-        /* Eliminar encabezados y pies de página del navegador */
-        @page { margin: 0; }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🔧 Artemisa XML a Ticket")
-
-uploaded_file = st.file_uploader("Subir XML de Autorización", type=["xml"])
-
-if uploaded_file is not None:
+def enviar_a_impresora(contenido_ticket):
     try:
-        xml_data = uploaded_file.read().decode("utf-8").strip()
-        root = ET.fromstring(xml_data)
-        comprobante_xml_string = root.find('comprobante').text.strip()
-        factura_root = ET.fromstring(comprobante_xml_string)
+        nombre_impresora = win32print.GetDefaultPrinter()
+        hprinter = win32print.OpenPrinter(nombre_impresora)
+        pdc = win32ui.CreateDC()
+        pdc.CreatePrinterDC(nombre_impresora)
+        pdc.StartDoc("Ticket Artemisa")
+        pdc.StartPage()
         
-        info_t = factura_root.find('infoTributaria')
-        info_f = factura_root.find('infoFactura')
+        font = win32ui.CreateFont({"name": "Courier New", "height": 32, "weight": 400})
+        pdc.SelectObject(font)
         
-        # Datos del Ticket
-        emisor = info_t.find('razonSocial').text
-        ruc_em = info_t.find('ruc').text
-        cliente = info_f.find('razonSocialComprador').text
-        ruc_cl = info_f.find('identificacionComprador').text
-        fecha = info_f.find('fechaEmision').text
-        total_f = float(info_f.find('importeTotal').text)
+        y = 20
+        for linea in contenido_ticket.split('\n'):
+            pdc.TextOut(10, y, linea)
+            y += 35 
+            
+        pdc.EndPage()
+        pdc.EndDoc()
+        pdc.DeleteDC()
+        messagebox.showinfo("Éxito", "Ticket enviado.")
+    except Exception as e:
+        messagebox.showerror("Error de Impresora", f"{e}")
 
-        # DISEÑO DEL TICKET (Ajustado a 40 columnas)
-        # ----------------------------------------
-        linea = "-" * 40 + "\n"
-        t = f"{emisor.center(40)}\n"
-        t += f"{('RUC: ' + ruc_em).center(40)}\n"
-        t += linea
+def procesar_xml():
+    ruta = filedialog.askopenfilename(filetypes=[("Archivos XML", "*.xml")])
+    if not ruta: return
+
+    try:
+        tree = ET.parse(ruta)
+        root = tree.getroot()
+        
+        # El SRI a veces mete el contenido en una etiqueta 'comprobante' CDATA
+        comprobante_nodo = root.find('comprobante')
+        if comprobante_nodo is not None:
+            f_root = ET.fromstring(comprobante_nodo.text.strip())
+        else:
+            f_root = root # El XML ya viene limpio
+
+        # Buscamos secciones principales con seguridad
+        tributaria = f_root.find('infoTributaria')
+        factura = f_root.find('infoFactura')
+        
+        if tributaria is None or factura is None:
+            raise ValueError("El formato del XML no es una Factura estándar del SRI.")
+
+        emisor = obtener_texto(tributaria, 'razonSocial')
+        ruc_em = obtener_texto(tributaria, 'ruc')
+        cliente = obtener_texto(factura, 'razonSocialComprador')
+        ruc_cl = obtener_texto(factura, 'identificacionComprador')
+        fecha = obtener_texto(factura, 'fechaEmision')
+        total_pago = obtener_texto(factura, 'importeTotal')
+
+        sep = "-" * 40 + "\n"
+        t = f"{emisor[:40].center(40)}\n"
+        t += f"RUC: {ruc_em}\n".center(40)
+        t += sep
         t += f"FECHA: {fecha}\n"
-        t += f"CLIENTE: {cliente[:31]}\n"
+        t += f"CLIENTE: {cliente[:30]}\n"
         t += f"RUC/CI: {ruc_cl}\n"
-        t += linea
-        # Cabecera: CANT(5) DESC(14) P.U(9) TOTAL(12)
-        t += f"{'CANT':<5}{'DESCRIPCION':<14}{'P.U':>9}{'TOTAL':>12}\n"
-        t += linea
+        t += sep
+        t += f"{'CANT':<5}{'DESC':<15}{'TOTAL':>18}\n"
+        t += sep
 
-        for det in factura_root.findall('.//detalles/detalle'):
-            cant = float(det.find('cantidad').text)
-            desc = det.find('descripcion').text[:13]
-            p_u = float(det.find('precioUnitario').text)
-            sub = float(det.find('precioTotalSinImpuesto').text)
-            # Alineación forzada para que el TOTAL quede al final
-            t += f"{cant:<5.2f}{desc:<14}${p_u:>8.2f}${sub:>11.2f}\n"
+        # Procesar detalles con seguridad
+        for det in f_root.findall('.//detalle'):
+            cant = obtener_texto(det, 'cantidad')
+            desc = obtener_texto(det, 'descripcion')[:14]
+            total_det = obtener_texto(det, 'precioTotalSinImpuesto')
+            t += f"{cant:<5}{desc:<15}${total_det:>17}\n"
 
-        t += linea
-        t += f"{'TOTAL A PAGAR:':<25}${total_f:>14.2f}\n"
-        t += "=" * 40 + "\n"
-        t += "        ¡Gracias por su compra!\n"
-        t += "         Soporte: Artemisa Tech"
+        t += sep
+        t += f"{'TOTAL A PAGAR:':<20}${total_pago:>18}\n"
+        t += sep
+        t += "¡Gracias por su compra!".center(40)
 
-        # Mostrar el ticket con la clase que la impresora reconoce
-        st.markdown(f'<div class="ticket-print" style="font-family: monospace; white-space: pre; font-size: 11pt; color: black; background-color: white; padding: 10px;">{t}</div>', unsafe_allow_html=True)
-        
-        st.write("---")
-        st.success("✅ ¡Ticket alineado! Presiona **Ctrl + P**.")
+        enviar_a_impresora(t)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        messagebox.showerror("Error en el XML", f"Estructura no reconocida:\n{e}")
+
+# Interfaz
+app = tk.Tk()
+app.title("Artemisa POS v2.0")
+app.geometry("400x250")
+
+tk.Label(app, text="Artemisa POS - Impresión Directa", font=("Arial", 12, "bold")).pack(pady=15)
+tk.Button(app, text="Seleccionar y Imprimir XML", command=procesar_xml, bg="#28a745", fg="white", font=("Arial", 10, "bold"), height=2, width=30).pack()
+tk.Label(app, text="Soporta formatos SRI 2024-2026", font=("Arial", 8, "italic")).pack(side="bottom", pady=10)
+
+app.mainloop()

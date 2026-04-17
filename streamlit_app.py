@@ -3,35 +3,35 @@ import xml.etree.ElementTree as ET
 
 st.set_page_config(page_title="Artemisa POS", page_icon="🔧")
 
-# ESTILOS CSS: Limpieza total para impresión
+# CSS OPTIMIZADO: Muestra SOLO el ticket al imprimir
 st.markdown("""
     <style>
-    /* Ocultar elementos de la web en la pantalla */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* ESTO ES LO MÁS IMPORTANTE: Reglas para la impresora */
+    /* Ocultar elementos molestos en la pantalla normal */
+    #MainMenu, footer, header {visibility: hidden;}
+
+    /* REGLAS DE IMPRESIÓN */
     @media print {
-        /* Ocultar todo lo que no sea el ticket */
-        button, .stButton, .stFileUploader, .stInfo, .stAlert, h1, .stMarkdown:not(.ticket-container) {
-            display: none !important;
-        }
-        
-        /* Asegurar que el ticket ocupe el ancho correcto y sea texto negro puro */
-        .ticket-container {
-            border: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 100% !important;
-            position: absolute;
-            top: 0;
-            left: 0;
-        }
-        
-        /* Eliminar márgenes extras de la página de impresión */
-        @page {
+        /* Ocultar ABSOLUTAMENTE TODO */
+        body * {
+            visibility: hidden;
             margin: 0;
+        }
+        /* Mostrar SOLO el contenedor del ticket y su contenido */
+        .printable-ticket, .printable-ticket * {
+            visibility: visible;
+        }
+        .printable-ticket {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            color: black !important;
+            background-color: white !important;
+            font-size: 12pt;
+        }
+        /* Quitar pie de página del navegador (URL, fecha) */
+        @page {
+            margin: 0.5cm;
         }
     }
     </style>
@@ -58,38 +58,40 @@ if uploaded_file is not None:
         fecha = info_f.find('fechaEmision').text
         total_f = float(info_f.find('importeTotal').text)
 
-        # Construcción del texto del ticket (Ancho 40 carac. para POS-80)
+        # Construcción del texto (Ajustado a 40 caracteres para POS-80)
+        linea = "-" * 40 + "\n"
         t = f"{emisor.center(40)}\n"
         t += f"{('RUC: ' + ruc_em).center(40)}\n"
-        t += "-" * 40 + "\n"
+        t += linea
         t += f"FECHA: {fecha}\n"
         t += f"CLIENTE: {cliente[:31]}\n"
         t += f"RUC/CI: {ruc_cl}\n"
-        t += "-" * 40 + "\n"
-        t += f"{'CANT':<5}{'DESCRIPCION':<15}{'P.U':>9}{'TOTAL':>11}\n"
-        t += "-" * 40 + "\n"
+        t += linea
+        t += f"{'CANT':<5}{'DESCRIPCION':<15}{'P.U':>8}{'TOTAL':>12}\n"
+        t += linea
 
         for det in factura_root.findall('.//detalles/detalle'):
             cant = float(det.find('cantidad').text)
             desc = det.find('descripcion').text[:14]
             p_uni = float(det.find('precioUnitario').text)
             subt = float(det.find('precioTotalSinImpuesto').text)
-            t += f"{cant:<5.2f}{desc:<15}${p_uni:>8.2f}${subt:>10.2f}\n"
+            t += f"{cant:<5.2f}{desc:<15}${p_uni:>7.2f}${subt:>11.2f}\n"
 
-        t += "-" * 40 + "\n"
-        t += f"{'TOTAL A PAGAR:':<26}${total_f:>12.2f}\n"
+        t += linea
+        t += f"{'TOTAL A PAGAR:':<25}${total_f:>14.2f}\n"
         t += "=" * 40 + "\n"
         t += "        ¡Gracias por su compra!\n"
         t += "         Soporte: Artemisa Tech"
 
-        # TICKET VISIBLE (Encerrado en la clase ticket-container)
+        # EL TICKET (Contenedor con clase printable-ticket)
         st.markdown(f"""
-            <div class="ticket-container" style="background-color: white; color: black; padding: 15px; font-family: 'Courier New', Courier, monospace; white-space: pre; line-height: 1.2; border: 1px solid #eee;">
+            <div class="printable-ticket" style="background-color: white; color: black; padding: 10px; font-family: 'Courier New', Courier, monospace; white-space: pre; line-height: 1.2;">
 {t}
             </div>
             """, unsafe_allow_html=True)
         
-        st.info("💡 **Para imprimir:** Presiona **Ctrl + P**. El sistema automáticamente ocultará todo excepto el ticket.")
+        st.write("---")
+        st.info("✅ Ticket generado. Presiona **Ctrl + P** para imprimir.")
 
     except Exception as e:
         st.error(f"Error al procesar: {e}")
